@@ -1,0 +1,73 @@
+#!/bin/bash
+
+CONFIG_FILE='/etc/confluence-backup.conf'
+TIMESTAMP=$(date +'%Y-%m-%d-%H-%M')
+
+if [ -e ${CONFIG_FILE} ]; then
+    source ${CONFIG_FILE}
+else
+    echo "Error: ${CONFIG_FILE} missing"
+    exit 1
+fi
+
+cat ~/.pgpass | grep "${DB_HOST}:5432:${DB_NAME}:${DB_USER}:${DB_PASS}" > /dev/null
+if [ $? != 0 ] ; then
+    echo "${DB_HOST}:5432:${DB_NAME}:${DB_USER}:${DB_PASS}" >> ~/.pgpass
+    chmod 600 ~/.pgpass
+fi
+
+ATTACHMENT_BACKUP_OUTPUT="${BACKUP_DIR}/confluence-attachments-${TIMESTAMP}.tar"
+HOME_BACKUP_OUTPUT="${BACKUP_DIR}/confluence-home-${TIMESTAMP}.tar"
+APP_BACKUP_OUTPUT="${BACKUP_DIR}/confluence-app-${TIMESTAMP}.tar"
+DATABASE_DUMP_OUTPUT="${BACKUP_DIR}/confluence-database-dump-${TIMESTAMP}.sql"
+
+
+function setup() {
+    if [ ! -d "${BACKUP_DIR}" ]; then
+        echo "Creating ${BACKUP_DIR}"
+        mkdir -p "${BACKUP_DIR}"
+    fi
+}
+
+function backup_home() {
+    echo "Backing up Confluence home"
+    /bin/tar -cp --exclude="*/logs/*" --exclude="*/backups/*" -f ${HOME_BACKUP_OUTPUT} ${CONFLUENCE_HOME_PATH}
+    /usr/bin/pigz ${HOME_BACKUP_OUTPUT}
+    echo "Created ${HOME_BACKUP_OUTPUT}.gz"
+}
+
+function backup_app() {
+    echo "Backing up Confluence app"
+    /bin/tar -cpf ${APP_BACKUP_OUTPUT} ${CONFLUENCE_APP_PATH}
+    /usr/bin/pigz ${APP_BACKUP_OUTPUT}
+    echo "Created ${APP_BACKUP_OUTPUT}.gz"
+}
+
+function backup_attachments() {
+    echo "Backing up Confluence attachments"
+    /bin/tar -cpf ${ATTACHMENT_BACKUP_OUTPUT} ${CONFLUENCE_ATTACHMENTS_PATH}
+    /usr/bin/pigz ${ATTACHMENT_BACKUP_OUTPUT}
+    echo "Created ${ATTACHMENT_BACKUP_OUTPUT}.gz"
+}
+
+function dump_database() {
+    echo "Dumping Confluence database"
+    /usr/bin/pg_dump -U "${DB_USER}" -d "${DB_NAME}" -h "${DB_HOST}" -w > "${DATABASE_DUMP_OUTPUT}"
+    echo "Created ${DATABASE_DUMP_OUTPUT}"
+}
+
+function main() {
+    echo "Backing up Confluence"
+    setup
+    backup_home
+    backup_app
+    #backup_attachments
+    dump_database
+}
+
+main
+
+if [ -d "${BACKUP_DIR}" ]; then
+    ( cd ${BACKUP_DIR} && find *.tar.gz -mtime +1 -exec rm {} \; )
+    ( cd ${BACKUP_DIR} && find *.sql -mtime +1 -exec rm {} \; )
+fi
